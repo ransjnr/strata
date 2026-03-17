@@ -3,7 +3,7 @@
 **Declarative, type-safe, parallel request pipelines — a better alternative to middleware.**
 
 ```
-npm install strata zod
+npm install @ransjnr/strata zod
 ```
 
 > Middleware says *"do these things in this order."*
