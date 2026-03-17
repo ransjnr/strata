@@ -70,12 +70,15 @@
     "zod": "^3.23.0"
   },
   "peerDependencies": {
-    "zod": "^3.0.0",
-    "express": ">=4.0.0"
+    "express": ">=4.0.0",
+    "zod": "^3.0.0"
   },
   "peerDependenciesMeta": {
     "express": {
       "optional": true
     }
+  },
+  "dependencies": {
+    "git-filter-repo": "^0.0.30"
   }
 }
