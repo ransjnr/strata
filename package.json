@@ -1,5 +1,5 @@
 {
-  "name": "strata",
+  "name": "@ransjnr/strata",
   "version": "0.1.0",
   "description": "Declarative, type-safe, parallel request pipeline — a better alternative to middleware",
   "main": "dist/index.js",
@@ -12,15 +12,47 @@
       "require": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "scripts": {
     "build": "tsup src/index.ts --format cjs,esm --dts --clean",
     "dev": "tsup src/index.ts --format cjs,esm --dts --watch",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run build && npm test"
   },
-  "keywords": ["middleware", "strata", "pipeline", "nextjs", "typescript", "request"],
+  "keywords": [
+    "middleware",
+    "strata",
+    "pipeline",
+    "nextjs",
+    "typescript",
+    "request",
+    "web",
+    "handler",
+    "parallel",
+    "type-safe",
+    "zod",
+    "cloudflare-workers",
+    "hono"
+  ],
+  "author": "ransjnr",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ransjnr/strata.git"
+  },
+  "homepage": "https://github.com/ransjnr/strata#readme",
+  "bugs": {
+    "url": "https://github.com/ransjnr/strata/issues"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "tsup": "^8.0.0",
