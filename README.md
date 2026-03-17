@@ -121,11 +121,11 @@ When you build a `route`, you hand it a list of strata. Strata reads the depende
 ## Installation
 
 ```bash
-npm install strata zod
+npm install @ransjnr/strata zod
 # or
-pnpm add strata zod
+pnpm add @ransjnr/strata zod
 # or
-yarn add strata zod
+yarn add @ransjnr/strata zod
 ```
 
 Strata requires **Zod v3** as a peer dependency for schema declarations. TypeScript 5.0+ is recommended for best type inference.
@@ -135,7 +135,7 @@ Strata requires **Zod v3** as a peer dependency for schema declarations. TypeScr
 ## Quick start
 
 ```typescript
-import { stratum, route, StratumError } from 'strata'
+import { stratum, route, StratumError } from '@ransjnr/strata'
 import { z } from 'zod'
 
 // 1. Define a concern
