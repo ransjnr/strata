@@ -15,6 +15,15 @@ export { stratum } from './stratum.js'
 export { route, formation } from './route.js'
 export { StratumError, isStratumError } from './error.js'
 
+// Agent feature
+export { tool } from './tool.js'
+export { agent, runAgentLoop } from './agent.js'
+export {
+  setDefaultProvider,
+  getDefaultProvider,
+  zodToOutputDescription,
+} from './provider.js'
+
 // Types
 export type {
   StratumDef,
@@ -27,3 +36,17 @@ export type {
 } from './types.js'
 
 export type { ExecutionTrace, ExecutionWave } from './executor.js'
+
+export type { ToolDef, AnyToolDef } from './tool.js'
+export type {
+  AgentConfig,
+  AgentResolveArgs,
+  AgentRunResult,
+} from './agent.js'
+export type {
+  AgentMessage,
+  AgentProvider,
+  ProviderInvokeArgs,
+  ProviderInvokeResult,
+  ToolCall,
+} from './provider.js'
