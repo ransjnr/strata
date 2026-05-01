@@ -1,6 +1,6 @@
 {
   "name": "@ransjnr/strata",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Declarative, type-safe, parallel request pipeline — a better alternative to middleware",
   "main": "dist/index.js",
   "module": "dist/index.mjs",
