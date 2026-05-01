@@ -31,6 +31,12 @@ npm install @ransjnr/strata zod
   - [Role-based permissions](#role-based-permissions)
   - [Request validation](#request-body-validation)
 - [Reusable formations](#reusable-formations)
+- [Agents — LLM-powered strata](#agents--llm-powered-strata)
+  - [Quick start with Groq](#quick-start-with-groq)
+  - [agent()](#agent)
+  - [tool()](#tool)
+  - [How the agent loop works](#how-the-agent-loop-works)
+  - [CLI scaffolder](#cli-scaffolder)
 - [Using with Next.js App Router](#using-with-nextjs-app-router)
 - [Using with Cloudflare Workers / Hono](#using-with-cloudflare-workers--hono)
 - [TypeScript types](#typescript-types)
@@ -653,6 +659,172 @@ export const DELETE = route({
 
 ---
 
+## Agents — LLM-powered strata
+
+Strata's `agent()` lets you drop an LLM-powered concern into the same
+dependency graph as your auth, logging, and validation strata. An agent is
+just a stratum whose `resolve` runs a tool-use loop and returns Zod-validated
+structured output, so it composes with everything else, runs in parallel
+with independent strata, and short-circuits cleanly via `StratumError`.
+
+### Quick start with Groq
+
+```bash
+npm install @ransjnr/strata zod groq-sdk
+export GROQ_API_KEY=sk_...
+npx strata init
+npx strata agent add summarizer
+```
+
+Then in your app entry point:
+
+```typescript
+import 'strata/provider'   // registers the default Groq provider once
+```
+
+```typescript
+// strata/agents/summarizer.ts (scaffolded)
+import { agent } from '@ransjnr/strata'
+import { z } from 'zod'
+
+export const summarizerAgent = agent({
+  name: 'summary',
+  provides: z.object({
+    summary: z.string(),
+    tags: z.array(z.string()).max(5),
+  }),
+  requires: [],
+  model: 'llama-3.3-70b-versatile',
+  system: 'You are a concise summarizer.',
+  prompt: ({ req }) => `Summarize the page at ${new URL(req.url).pathname}.`,
+})
+```
+
+```typescript
+// app/api/summarize/route.ts
+import { route } from '@ransjnr/strata'
+import { summarizerAgent } from '@/strata/agents/summarizer'
+
+export const POST = route({
+  strata: [summarizerAgent],
+  handler: async ({ context }) => Response.json(context.summary),
+})
+```
+
+That's it — Strata runs the agent, validates its output against `provides`,
+and hands you a fully typed `context.summary`.
+
+---
+
+### `agent()`
+
+Defines an LLM-backed stratum.
+
+```typescript
+function agent<Name, Provides, Deps>(config: {
+  name: Name                // unique identifier (becomes the context key)
+  provides: Provides        // Zod schema for the structured output
+  requires?: Deps           // other strata this agent depends on
+  model: string             // provider model id, e.g. 'llama-3.3-70b-versatile'
+  system?: string | ((args) => string)
+  prompt:  string | ((args) => string | AgentMessage[])
+  tools?:  ToolDef[]
+  maxTurns?:    number      // default: 8
+  maxTokens?:   number
+  temperature?: number
+  provider?:    AgentProvider   // override the default provider
+  signal?:      AbortSignal
+}): StratumDef<Name, Provides, Deps>
+```
+
+Both `system` and `prompt` can be functions of `{ req, context }` — so an
+agent can read fully typed data from any stratum it requires:
+
+```typescript
+const replyAgent = agent({
+  name: 'reply',
+  provides: z.object({ message: z.string() }),
+  requires: [authStratum, bodyStratum],
+  model: 'llama-3.3-70b-versatile',
+  prompt: ({ context }) =>
+    `User ${context.auth.user.id} asked: ${context.body.data.question}`,
+})
+```
+
+**Errors**
+
+- Schema validation failures are fed back to the model so it can correct itself
+- Hitting `maxTurns` or losing the provider both throw `StratumError(500, ...)`
+- Aborting the request raises `StratumError(499, ...)`
+
+---
+
+### `tool()`
+
+Defines a typed tool the agent can call. Tools are NOT request-bound — the
+same tool can be reused across many agents and many requests.
+
+```typescript
+import { tool } from '@ransjnr/strata'
+import { z } from 'zod'
+
+export const searchTool = tool({
+  name: 'search',
+  description: 'Search the knowledge base for relevant articles.',
+  input: z.object({ query: z.string(), limit: z.number().optional() }),
+  run: async ({ input, signal }) => {
+    return await db.articles.search(input.query, { signal })
+  },
+})
+```
+
+The `input` schema is enforced before `run` is called, so `run` receives
+fully typed input. If the model produces invalid input, Strata sends the
+validation issues back to the model and lets it retry.
+
+---
+
+### How the agent loop works
+
+When an agent stratum resolves:
+
+1. Render the `system` and `prompt` (functions get the typed deps context)
+2. Call the provider with the messages, tools, and a synthetic
+   `submit_output` tool whose schema is your `provides` schema
+3. If the model calls `submit_output`, validate against `provides`:
+   - **valid** → return the typed output, the agent resolves
+   - **invalid** → push the validation error back to the model and loop
+4. If the model calls other tools, run them in parallel (`Promise.all`) and
+   feed the results back
+5. If the model ends without `submit_output`, nudge it once; otherwise fail
+6. Stop after `maxTurns` (default 8) and throw a `StratumError(500)`
+
+Because an agent is a stratum, the strata it `requires` resolve **before**
+its first turn — so auth, body parsing, and rate limiting can short-circuit
+the request before the agent ever talks to the LLM.
+
+---
+
+### CLI scaffolder
+
+Strata ships a small CLI that scaffolds the agent folder layout.
+
+```bash
+npx strata init                # create strata/{provider.ts,agents,tools,formations.ts}
+npx strata agent add summary   # → strata/agents/summary.ts
+npx strata tool  add search    # → strata/tools/search.ts
+```
+
+Flags:
+
+- `--model <id>` sets the model in the generated agent (defaults to
+  `llama-3.3-70b-versatile`)
+
+Refusing-to-overwrite: every command errors out if the target file
+already exists, so you can re-run safely.
+
+---
+
 ## Using with Next.js App Router
 
 Strata is designed for the App Router. The `route()` return value matches Next.js's expected `(req: Request) => Promise<Response>` signature exactly.
@@ -816,6 +988,9 @@ Each stratum name must be unique within a route. If two strata have the same `na
 - [ ] **Strata cache** — per-request memoization so the same stratum used in multiple routes isn't re-executed for the same request
 - [ ] **`onError` hook** — per-stratum error handler for logging or fallback behavior
 - [ ] **Stream support** — strata that produce streaming responses
+- [x] **Agents** — `agent()` + `tool()` primitives with a Groq adapter (`@ransjnr/strata/groq`) and CLI scaffolder
+- [ ] **More providers** — OpenAI, Anthropic, and OpenRouter adapters
+- [ ] **Native structured-output mode** — skip the synthetic `submit_output` tool when a provider has JSON-schema response support
 
 ---
 

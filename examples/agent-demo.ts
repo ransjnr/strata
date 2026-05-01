@@ -4,11 +4,11 @@
  * Run with: npx tsx examples/agent-demo.ts
  *
  * Requires:
- *   npm install @anthropic-ai/sdk
- *   ANTHROPIC_API_KEY in your environment
+ *   npm install groq-sdk
+ *   GROQ_API_KEY in your environment
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import Groq from 'groq-sdk'
 import { z } from 'zod'
 import {
   agent,
@@ -18,12 +18,12 @@ import {
   tool,
   StratumError,
 } from '@ransjnr/strata'
-import { anthropicProvider } from '@ransjnr/strata/anthropic'
+import { groqProvider } from '@ransjnr/strata/groq'
 
 // 1. Configure provider once at startup.
 setDefaultProvider(
-  anthropicProvider({
-    client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+  groqProvider({
+    client: new Groq({ apiKey: process.env.GROQ_API_KEY }),
   }),
 )
 
@@ -60,7 +60,7 @@ const summarizer = agent({
     wordCount: z.number(),
   }),
   requires: [bodyStratum],
-  model: 'claude-sonnet-4-6',
+  model: 'llama-3.3-70b-versatile',
   system:
     'You are a concise summarizer. Use word_count to measure the input, then call submit_output with the summary.',
   prompt: ({ context }) => `Summarize and tag this text:\n\n${context.body.text}`,

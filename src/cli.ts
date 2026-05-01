@@ -129,8 +129,8 @@ async function cmdInit(_args: string[]): Promise<void> {
   await writeFile(join(root, 'formations.ts'), FORMATIONS_TS)
 
   console.log('\nNext steps:')
-  console.log('  1. npm install @anthropic-ai/sdk')
-  console.log('  2. Set ANTHROPIC_API_KEY in your environment')
+  console.log('  1. npm install groq-sdk')
+  console.log('  2. Set GROQ_API_KEY in your environment')
   console.log('  3. Import strata/provider once at app startup')
   console.log('  4. Run: strata agent add <name>')
 }
@@ -145,7 +145,7 @@ async function cmdAgent(args: string[]): Promise<void> {
   const name = toCamel(rawName)
   const file = toKebab(rawName)
   const flags = parseFlags(rest)
-  const model = flags.model ?? 'claude-sonnet-4-6'
+  const model = flags.model ?? 'llama-3.3-70b-versatile'
 
   const path = join(findStrataRoot(), 'agents', `${file}.ts`)
   await writeFile(path, agentTemplate({ name, model }))
@@ -199,13 +199,13 @@ const PROVIDER_TS = `/**
  * doesn't pass an explicit \`provider:\` falls back to it.
  */
 
-import Anthropic from '@anthropic-ai/sdk'
+import Groq from 'groq-sdk'
 import { setDefaultProvider } from '@ransjnr/strata'
-import { anthropicProvider } from '@ransjnr/strata/anthropic'
+import { groqProvider } from '@ransjnr/strata/groq'
 
 setDefaultProvider(
-  anthropicProvider({
-    client: new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }),
+  groqProvider({
+    client: new Groq({ apiKey: process.env.GROQ_API_KEY }),
     defaultMaxTokens: 4096,
   }),
 )

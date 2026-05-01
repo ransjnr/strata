@@ -1,14 +1,13 @@
 /**
- * Anthropic provider adapter for Strata agents.
+ * Groq provider adapter for Strata agents.
  *
- * Uses the official `@anthropic-ai/sdk`. The SDK is a peer dependency — you
- * must install it yourself:
+ * Uses the official `groq-sdk`. Install it yourself:
  *
- *   npm install @anthropic-ai/sdk
+ *   npm install groq-sdk
  *
- * Tool input schemas are converted to JSON Schema via `zod-to-json-schema` if
- * available; otherwise we fall back to a minimal best-effort conversion that
- * works for plain object schemas.
+ * Groq exposes an OpenAI-compatible chat-completions API with native
+ * tool-use, so this adapter translates Strata's provider-agnostic
+ * `AgentMessage` / tool format into OpenAI-style messages and back.
  */
 
 import type {
@@ -23,35 +22,42 @@ import type { AnyZodObject } from '../types.js'
 
 // ─── Minimal client surface (avoids hard dependency on the SDK at type level) ─
 
-interface AnthropicMessageCreateParams {
+interface GroqChatCompletionParams {
   model: string
-  max_tokens: number
-  system?: string
   messages: unknown[]
   tools?: unknown[]
+  tool_choice?: 'auto' | 'none' | 'required' | { type: 'function'; function: { name: string } }
+  max_tokens?: number
   temperature?: number
-  tool_choice?: { type: 'auto' | 'any' | 'tool'; name?: string }
 }
 
-interface AnthropicContentBlock {
-  type: 'text' | 'tool_use' | string
-  text?: string
-  id?: string
-  name?: string
-  input?: unknown
+interface GroqToolCall {
+  id: string
+  type: 'function'
+  function: { name: string; arguments: string }
 }
 
-interface AnthropicMessageResponse {
-  content: AnthropicContentBlock[]
-  stop_reason: string | null
+interface GroqChoice {
+  message: {
+    role: string
+    content: string | null
+    tool_calls?: GroqToolCall[]
+  }
+  finish_reason: string | null
 }
 
-interface AnthropicClientLike {
-  messages: {
-    create(
-      params: AnthropicMessageCreateParams,
-      options?: { signal?: AbortSignal },
-    ): Promise<AnthropicMessageResponse>
+interface GroqChatCompletionResponse {
+  choices: GroqChoice[]
+}
+
+interface GroqClientLike {
+  chat: {
+    completions: {
+      create(
+        params: GroqChatCompletionParams,
+        options?: { signal?: AbortSignal },
+      ): Promise<GroqChatCompletionResponse>
+    }
   }
 }
 
@@ -64,7 +70,6 @@ interface AnthropicClientLike {
  * will use it automatically.
  */
 function zodToJsonSchema(schema: AnyZodObject): Record<string, unknown> {
-  // Try to use zod-to-json-schema if it's installed.
   try {
     // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-var-requires
     const mod = require('zod-to-json-schema') as {
@@ -130,87 +135,84 @@ function fallbackZodToJsonSchema(schema: any): Record<string, unknown> {
 
 // ─── Message conversion ─────────────────────────────────────────────────────
 
-function toAnthropicMessages(messages: AgentMessage[]): unknown[] {
-  // Anthropic groups consecutive tool_results into a single user message.
+function toGroqMessages(
+  messages: AgentMessage[],
+  system: string | undefined,
+): unknown[] {
   const out: unknown[] = []
-  let pendingToolResults: unknown[] = []
-
-  const flushToolResults = () => {
-    if (pendingToolResults.length > 0) {
-      out.push({ role: 'user', content: pendingToolResults })
-      pendingToolResults = []
-    }
-  }
+  if (system) out.push({ role: 'system', content: system })
 
   for (const m of messages) {
-    if (m.role === 'tool') {
-      pendingToolResults.push({
-        type: 'tool_result',
-        tool_use_id: m.toolCallId,
-        content: m.content,
-      })
-      continue
-    }
-    flushToolResults()
     if (m.role === 'user') {
       out.push({ role: 'user', content: m.content })
-    } else {
-      // assistant
-      const blocks: unknown[] = []
-      if (m.content) blocks.push({ type: 'text', text: m.content })
-      for (const tc of m.toolCalls ?? []) {
-        blocks.push({
-          type: 'tool_use',
-          id: tc.id,
-          name: tc.name,
-          input: tc.input,
-        })
-      }
-      out.push({
+    } else if (m.role === 'assistant') {
+      const msg: Record<string, unknown> = {
         role: 'assistant',
-        content: blocks.length ? blocks : [{ type: 'text', text: '' }],
+        content: m.content || '',
+      }
+      if (m.toolCalls && m.toolCalls.length) {
+        msg.tool_calls = m.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: 'function',
+          function: {
+            name: tc.name,
+            arguments:
+              typeof tc.input === 'string'
+                ? tc.input
+                : JSON.stringify(tc.input ?? {}),
+          },
+        }))
+      }
+      out.push(msg)
+    } else {
+      // tool result
+      out.push({
+        role: 'tool',
+        tool_call_id: m.toolCallId,
+        content: m.content,
       })
     }
   }
-  flushToolResults()
   return out
 }
 
-function toAnthropicTools(tools: readonly AnyToolDef[]): unknown[] {
+function toGroqTools(tools: readonly AnyToolDef[]): unknown[] {
   return tools.map((t) => ({
-    name: t.name,
-    description: t.description,
-    input_schema: zodToJsonSchema(t.input),
+    type: 'function',
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: zodToJsonSchema(t.input),
+    },
   }))
 }
 
-function fromAnthropicResponse(
-  res: AnthropicMessageResponse,
+function fromGroqResponse(
+  res: GroqChatCompletionResponse,
 ): ProviderInvokeResult {
-  let text = ''
-  const toolCalls: ToolCall[] = []
-  for (const block of res.content) {
-    if (block.type === 'text' && typeof block.text === 'string') {
-      text += block.text
-    } else if (block.type === 'tool_use' && block.id && block.name) {
-      toolCalls.push({
-        id: block.id,
-        name: block.name,
-        input: block.input ?? {},
-      })
+  const choice = res.choices[0]
+  if (!choice) {
+    return {
+      message: { role: 'assistant', content: '' },
+      stopReason: 'other',
     }
   }
 
+  const text = choice.message.content ?? ''
+  const toolCalls: ToolCall[] = (choice.message.tool_calls ?? []).map((tc) => ({
+    id: tc.id,
+    name: tc.function.name,
+    input: parseJsonOrString(tc.function.arguments),
+  }))
+
   const stopReason: ProviderInvokeResult['stopReason'] =
-    res.stop_reason === 'tool_use'
+    choice.finish_reason === 'tool_calls'
       ? 'tool_use'
-      : res.stop_reason === 'end_turn'
+      : choice.finish_reason === 'stop'
         ? 'end_turn'
-        : res.stop_reason === 'max_tokens'
+        : choice.finish_reason === 'length'
           ? 'max_tokens'
-          : res.stop_reason === 'stop_sequence'
-            ? 'stop_sequence'
-            : 'other'
+          : 'other'
 
   return {
     message: {
@@ -222,52 +224,58 @@ function fromAnthropicResponse(
   }
 }
 
+function parseJsonOrString(s: string): unknown {
+  try {
+    return JSON.parse(s)
+  } catch {
+    return s
+  }
+}
+
 // ─── Provider factory ───────────────────────────────────────────────────────
 
-export interface AnthropicProviderOptions {
-  /** An instance of `new Anthropic()` from `@anthropic-ai/sdk`. */
-  client: AnthropicClientLike
+export interface GroqProviderOptions {
+  /** An instance of `new Groq()` from `groq-sdk`. */
+  client: GroqClientLike
   /** Default max_tokens when an agent doesn't specify one. */
   defaultMaxTokens?: number
 }
 
 /**
- * Create an Anthropic-backed agent provider.
+ * Create a Groq-backed agent provider.
  *
  * @example
  * ```ts
- * import Anthropic from '@anthropic-ai/sdk'
- * import { setDefaultProvider, anthropicProvider } from '@ransjnr/strata'
+ * import Groq from 'groq-sdk'
+ * import { setDefaultProvider } from '@ransjnr/strata'
+ * import { groqProvider } from '@ransjnr/strata/groq'
  *
- * setDefaultProvider(anthropicProvider({ client: new Anthropic() }))
+ * setDefaultProvider(groqProvider({ client: new Groq() }))
  * ```
  */
-export function anthropicProvider(
-  opts: AnthropicProviderOptions,
-): AgentProvider {
+export function groqProvider(opts: GroqProviderOptions): AgentProvider {
   const defaultMaxTokens = opts.defaultMaxTokens ?? 4096
 
   return {
-    name: 'anthropic',
+    name: 'groq',
     async invoke(args: ProviderInvokeArgs): Promise<ProviderInvokeResult> {
-      const params: AnthropicMessageCreateParams = {
+      const params: GroqChatCompletionParams = {
         model: args.model,
         max_tokens: args.maxTokens ?? defaultMaxTokens,
-        messages: toAnthropicMessages(args.messages),
-        ...(args.system ? { system: args.system } : {}),
+        messages: toGroqMessages(args.messages, args.system),
         ...(args.tools && args.tools.length
-          ? { tools: toAnthropicTools(args.tools) }
+          ? { tools: toGroqTools(args.tools) }
           : {}),
         ...(typeof args.temperature === 'number'
           ? { temperature: args.temperature }
           : {}),
       }
 
-      const res = await opts.client.messages.create(
+      const res = await opts.client.chat.completions.create(
         params,
         args.signal ? { signal: args.signal } : undefined,
       )
-      return fromAnthropicResponse(res)
+      return fromGroqResponse(res)
     },
   }
 }
